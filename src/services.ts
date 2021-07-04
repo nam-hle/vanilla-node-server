@@ -2,16 +2,16 @@ import { RequestListener } from "http";
 import { ProjectRequest } from "./types";
 import {
   lastIndex,
+  processData,
   readData,
   respondError,
   respondSuccess,
-  updateData,
 } from "./utils";
 import { URL } from "url";
 import { baseURL } from "./server";
 
 export const readProject: RequestListener = (_, res) => {
-  respondSuccess(res);
+  readData(res).then((projects = []) => respondSuccess(res, projects));
 };
 
 export const addTitle: RequestListener = (req, res) => {
@@ -21,17 +21,19 @@ export const addTitle: RequestListener = (req, res) => {
     body += chunk;
   });
 
-  req.on("end", () => {
+  req.on("end", async () => {
     const { title } = JSON.parse(body) as ProjectRequest;
 
-    if (title) {
-      const projects = readData();
-      projects.push({ id: lastIndex(projects) + 1, title, tasks: [] });
-
-      updateData(res, projects);
-    } else {
-      respondError(res, 400, "no title in body request");
+    if (!title) {
+      return respondError(res, 400, "no title in body request");
     }
+
+    const newProjects = await processData(res, (projects) => [
+      ...projects,
+      { id: lastIndex(projects) + 1, title, tasks: [] },
+    ]);
+
+    respondSuccess(res, newProjects);
   });
 };
 
@@ -42,28 +44,31 @@ export const addTasks: RequestListener = (req, res) => {
     body += chunk;
   });
 
-  req.on("end", () => {
+  req.on("end", async () => {
     const url = new URL(req.url ?? "", baseURL);
     const id = url.searchParams.get("id");
 
-    if (id) {
-      const { task } = JSON.parse(body) as ProjectRequest;
-
-      if (!task) {
-        respondError(res, 400, "no task found in body request!");
-      } else {
-        const projects = readData();
-        projects.forEach((project, projectIndex) => {
-          if (String(project.id) === id) {
-            project.tasks.push(task);
-          }
-        });
-
-        updateData(res, projects);
-      }
-    } else {
-      respondError(res, 500, "no query parameter!");
+    if (!id) {
+      return respondError(res, 500, "no query parameter!");
     }
+
+    const { task } = JSON.parse(body) as ProjectRequest;
+
+    if (!task) {
+      return respondError(res, 400, "no task found in body request!");
+    }
+
+    const newProjects = await processData(res, (projects) =>
+      projects.map((project) => {
+        if (String(project.id) !== id) {
+          return project;
+        }
+
+        return { ...project, tasks: [...project.tasks, task] };
+      })
+    );
+
+    respondSuccess(res, newProjects);
   });
 };
 
@@ -74,29 +79,31 @@ export const editTitle: RequestListener = (req, res) => {
     body += chunk;
   });
 
-  req.on("end", () => {
+  req.on("end", async () => {
     const url = new URL(req.url ?? "", baseURL);
     const id = url.searchParams.get("id");
 
-    if (id) {
-      const { title } = JSON.parse(body) as ProjectRequest;
-
-      if (!title) {
-        respondError(res, 400, "no title found in body request!");
-      } else {
-        const projects = readData();
-
-        projects.forEach((project, projectIndex) => {
-          if (String(project.id) === id) {
-            project.title = title;
-          }
-        });
-
-        updateData(res, projects);
-      }
-    } else {
-      respondError(res, 500, "no query parameter!");
+    if (!id) {
+      return respondError(res, 500, "no query parameter!");
     }
+
+    const { title } = JSON.parse(body) as ProjectRequest;
+
+    if (!title) {
+      return respondError(res, 400, "no title found in body request!");
+    }
+
+    const newProjects = await processData(res, (projects = []) => {
+      return projects.map((project) => {
+        if (String(project.id) === id) {
+          return { ...project, title };
+        } else {
+          return project;
+        }
+      });
+    });
+
+    respondSuccess(res, newProjects);
   });
 };
 
@@ -107,17 +114,18 @@ export const deleteProject: RequestListener = (req, res) => {
     body += chunk;
   });
 
-  req.on("end", () => {
+  req.on("end", async () => {
     const url = new URL(req.url ?? "", baseURL);
     const id = url.searchParams.get("id");
 
-    if (id) {
-      const projects = readData().filter(
-        (project) => String(project.id) !== id
-      );
-      updateData(res, projects);
-    } else {
-      respondError(res, 500, "no query parameter!");
+    if (!id) {
+      return respondError(res, 500, "no query parameter!");
     }
+
+    const newProjects = await processData(res, (projects) =>
+      projects?.filter((project) => String(project.id) !== id)
+    );
+
+    respondSuccess(res, newProjects);
   });
 };
